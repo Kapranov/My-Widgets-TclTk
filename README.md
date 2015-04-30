@@ -6,7 +6,7 @@ Tool Command Language, but conventionally spelled "Tcl" rather than
 "TCL"; pronounced as "tickle" or "tee-see-ell") is a scripting language
 created by John Ousterhout.
 
-### This is a screenshot which shows the three applications on Tcl/Tk.
+### This is a screenshot which shows the three applications.
 ![Billing System](/app-tcltk.png "Control Center")
 
 In those days, it was my favorite programming language for writing GUIs,
