@@ -20,6 +20,7 @@ scientific data. Here are some examples of their work on Tcltk.
 
 [SkyCat - ESO tool combines image visualization and access to catalogs](http://archive.eso.org/cms/tools-documentation/skycat/eso-skycat-download.html)
 
+[ESO-MIDAS - system provides general tools for image processing and data reduction](http://www.eso.org/sci/software/esomidas/)
 
 
 Let me remind you what and where did TclTk.
