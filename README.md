@@ -7,6 +7,9 @@ and the Tk GUI toolkit is referred to as Tcl/Tk. The Tcl programming
 language was created in the spring of 1988 by John Ousterhout while
 working at the University of California, Berkeley.
 
+I present here is the source code partially saved and written by me
+from 2003 to 2006 on programming language Tcl/Tk.
+
 [Tcl on wiki](https://en.wikipedia.org/wiki/Tcl)
 
 ##### 30 april 2015
