@@ -7,7 +7,10 @@ Tool Command Language, but conventionally spelled "Tcl" rather than
 created by John Ousterhout.
 
 In those days, it was my favorite programming language for writing GUIs,
-as we now say backend.
+as we now say backend. I did not like the Delphi and Pascal.
+The examples of writing programs , I took with NASA and other
+research institutions for the visualization and presentation of
+scientific data
 
 
 The combination of Tcl and the Tk GUI toolkit is referred to as Tcl/Tk.
