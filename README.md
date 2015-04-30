@@ -11,7 +11,7 @@ created by John Ousterhout.
 
 In those days, it was my favorite programming language for writing GUIs,
 as we now say backend  and frontend. I did not like the Delphi and Pascal.
-The examples of writing programs , I took with NASA and other
+The examples of writing programs, I took with NASA and other
 research institutions for the visualization and presentation of
 scientific data. Here are some examples of their work on Tcltk.
 
