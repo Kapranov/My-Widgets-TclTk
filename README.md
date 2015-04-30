@@ -10,8 +10,9 @@ In those days, it was my favorite programming language for writing GUIs,
 as we now say backend. I did not like the Delphi and Pascal.
 The examples of writing programs , I took with NASA and other
 research institutions for the visualization and presentation of
-scientific data
+scientific data. Here are some examples of their work on Tcltk.
 
+Let me remind you what and where did TclTk.
 
 The combination of Tcl and the Tk GUI toolkit is referred to as Tcl/Tk.
 The Tcl programming language was created in the spring of 1988 by John
