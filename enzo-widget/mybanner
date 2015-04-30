@@ -1,0 +1,102 @@
+#!/usr/bin/wish
+
+package require led
+
+namespace forget led::*
+namespace import led::*
+
+set w .l
+
+proc move {} {
+	global X Y dX maxX minX dragged stopped
+	if {$stopped==0} {
+		wm geometry . +$X+$Y
+		if {[expr $X+[winfo width .]]>=$maxX}  "set dX -1"
+		if {$X<=$minX}  "set dX 1"
+		incr X $dX
+		after 10 "move"
+	}
+}
+
+proc changeText {} {
+	global settxt iscmd str w
+	if {$iscmd==1} {
+		set settxt {global shcmd; set txt "[exec $shcmd]"}
+	} else {
+		set settxt {global str; set txt $str}
+	}
+	eval $settxt
+	$w config -text $txt
+	if {$iscmd==0} {
+		  $w config -font {"utah mt" 11 {bold} }
+	} else {
+		  $w config -font {"utah mt" 10 {bold} }
+	}
+	if {[string length $txt] < 150} {
+		$w config -fg "white" -bg "darkred" \
+	  	-activebackground "yellow" -activeforeground "darkblue"
+	}
+}
+
+proc change {} {
+	global toupdate chgres updateperiod
+	changeText
+	if {$toupdate==1} {
+		set chgres [after [expr $updateperiod*2] "change"]
+	}
+}
+
+proc drag {a b} {
+	global X Y dragged lastX lastY stopped
+	if {$dragged==0} {
+		set lastX $a
+		set lastY $b
+		set dragged 1
+		set stopped 1
+		return
+	}
+	set dragged 1
+	incr X [expr $a-$lastX]
+	incr Y [expr $b-$lastY]
+	set lastX $a
+	set lastY $b
+	wm geometry . +$X+$Y
+}
+
+set dragged 0
+set stopped 0
+set lastX 0
+set lastY 0
+set paused 0
+set X 10
+set Y 130
+set updateperiod 10
+set toupdate 1
+set dX 1
+set maxX [winfo screenwidth .]
+set minX 0
+set str "   СЕТЬ UKRTELECOM НЕ РАБОТАЕТ   "
+
+button $w -relief groove -borderwidth 1
+
+
+set err [catch {change}]
+if {$err!=0} {
+	set iscmd 0
+	change
+}
+pack $w
+
+bind $w <1> "raise ."
+bind $w <B1-Motion> "drag %X %Y"
+bind $w <ButtonRelease-1> {
+	if {$dragged==1 && $paused==0} {
+		set dragged 0;set stopped 0;move
+	}
+}
+
+. config -cursor "hand1" -highlightthickness 1 -highlightcolor "DarkSlateGray" \
+	-highlightbackground "darkgrey"
+wm overrideredirect . 1 
+update
+move

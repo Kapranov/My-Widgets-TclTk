@@ -1,0 +1,256 @@
+#!/usr/bin/wish
+
+proc move {} {
+	global X Y dX maxX minX dragged stopped
+	if {$stopped==0} {
+		wm geometry . +$X+$Y
+		if {[expr $X+[winfo width .]]>=$maxX}  "set dX -1"
+		if {$X<=$minX}  "set dX 1"
+		incr X $dX
+		after 50 "move"
+	}
+}
+
+proc changeText {} {
+	global settxt txt shcmd iscmd str
+	if {$iscmd==1} {
+		set settxt {global shcmd; set txt "[exec $shcmd]"}
+	} else {
+		set settxt {global str; set txt $str}
+	}
+	eval $settxt
+	.l config -text $txt
+	if {$iscmd==0} {
+		  .l config -font {"utah mt" 13 {bold} }
+	} else {
+		  .l config -font {"utah mt" 13 {bold} }
+	}
+	if {[string length $txt] < 150} {
+		.l config -fg "white" -bg "darkred" \
+	  	-activebackground red -activeforeground "blue"
+	} else { 
+		.l config -fg "blue4" -bg "white" \
+	  	-activebackground red -activeforeground "white"
+	}
+}
+
+proc change {} {
+	global toupdate chgres updateperiod
+	changeText
+	if {$toupdate==1} {
+		set chgres [after [expr $updateperiod*1000] "change"]
+	}
+}
+
+proc drag {a b} {
+	global X Y dragged lastX lastY stopped
+	if {$dragged==0} {
+		set lastX $a
+		set lastY $b
+		set dragged 1
+		set stopped 1
+		return
+	}
+	set dragged 1
+	incr X [expr $a-$lastX]
+	incr Y [expr $b-$lastY]
+	set lastX $a
+	set lastY $b
+	wm geometry . +$X+$Y
+}
+
+set dragged 0
+set stopped 0
+set lastX 0
+set lastY 0
+set paused 0
+set X 10
+set Y 50
+set updateperiod 10
+set toupdate 1
+set dX 1
+set maxX [winfo screenwidth .]
+set minX 0
+set txt ""
+set shcmd "/usr/games/fortune"
+set str "Взлом системы"
+set iscmd 1
+
+button .l -text $txt \
+	 -relief ridge -borderwidth 1 -font {"utah mt" 13 {bold} }
+set err [catch {change}]
+if {$err!=0} {
+	set iscmd 0
+	change
+}
+pack .l
+bind .l <1> "raise ."
+bind .l <B1-Motion> "drag %X %Y"
+bind .l <ButtonRelease-1> {
+	if {$dragged==1 && $paused==0} {
+		set dragged 0;set stopped 0;move
+	}
+}
+menu .m -tearoff 0
+.m add command -label "About" -command {
+	toplevel .d
+	wm geometry .d +[expr $X+100]+[expr $Y+100]
+	wm title .d "About"
+	frame .d.f -borderwidth 1 -relief sunken
+	pack .d.f -fill both -side top -expand 1
+	label .d.f.l -text "Предупреждение\n" -width 20 \
+		-font {"utah mt" 13 {bold} underline}
+	pack .d.f.l
+	label .d.f.l2 -text "Создатель" -font {"utah mt" 13 {bold} }
+	pack .d.f.l2
+	label .d.f.n -text "Капранов О.Г." -fg "red"\
+		-font {lucidatypewriter 12 bold}
+	pack .d.f.n
+	label .d.f.e -text "lugatex@yahoo.com" -fg "blue"\
+		-font {lucidatypewriter 12 underline}
+	pack .d.f.e
+	button .d.ok -text "OK" -width 6 -command "destroy .d"\
+	 -font {helvetica 12 bold}
+	pack .d.ok
+	bind .d.ok <Return> "destroy .d"
+	focus .d.ok
+}
+.m add separator
+.m add command -label "Lower" -command "lower ."
+.m add command -label "Raise" -command "raise ."
+.m add command -label "Pause" -command {
+	if {$paused==0} {
+		set paused 1
+		.m entryconfigure 4 -label "Restore"
+	} else {
+		.m entryconfigure 4 -label "Pause"
+		set paused 0
+	}
+}
+.m add command -label "Change Text" -command {
+	global iscmd shcmd isc updateperiod isu toupdate str
+	toplevel .ct
+	wm geometry .ct +[expr $X+100]+[expr $Y+100]
+	wm title .ct "Tk Banner"
+	frame .ct.f -borderwidth 1 -relief sunken
+	pack .ct.f -fill both -side top -expand 1
+	set isc $iscmd
+	label .ct.f.l1 -text "Change Text\n" -width 20 \
+		-font {helvetica 20 bold underline}
+	pack .ct.f.l1
+	radiobutton .ct.f.c1 -text "Shell Command" -width 20 -value 1\
+		-variable isc -command {
+		set isu 1
+		catch {.ct.f.f2.l1 configure -text "Command "}
+		catch {.ct.f.f3.e1 configure -state normal}
+		catch {.ct.f.f3.l1 configure -fg #000000}
+		catch {.ct.f.f3.e1 delete 0 end }
+		catch {.ct.f.f3.e1 insert 0 $updateperiod}
+		catch {.ct.f.f2.e1 delete 0 end }
+		catch {.ct.f.f2.e1 insert 0 $shcmd}
+		catch {.ct.f.c3 configure -state normal}
+	}
+	pack .ct.f.c1
+	radiobutton .ct.f.c2 -text "String" -value 0 \
+		-variable isc -command {
+		set isu 0
+		catch {.ct.f.f2.l1 configure -text "Banner Title "}
+		catch {.ct.f.f3.e1 delete 0 end }
+		catch {.ct.f.f3.e1 configure -state disabled}
+		catch {.ct.f.f3.l1 configure -fg #888888}
+		catch {.ct.f.f2.e1 delete 0 end }
+		catch {.ct.f.f2.e1 insert 0 $str }
+		catch {.ct.f.c3 configure -state disabled}
+	}
+	pack .ct.f.c2
+	
+	frame .ct.f.f2
+	pack .ct.f.f2 -fill x -pady 10
+	label .ct.f.f2.l1 -text "" -width 10
+	pack .ct.f.f2.l1 -side left
+	entry .ct.f.f2.e1
+	pack .ct.f.f2.e1 -side right
+	if {$iscmd==1} {
+		.ct.f.f2.e1 insert 0 $shcmd
+		.ct.f.f2.l1 config -text "Command "
+	} else {
+		.ct.f.f2.e1 insert 0 $str
+		.ct.f.f2.l1 config -text "Banner Title"
+	}
+
+	set isu $toupdate
+	checkbutton .ct.f.c3 -text "Refresh" -variable isu \
+		-command {
+		if {$isu==1} {
+			catch {.ct.f.f3.e1 configure -state normal}
+			catch {.ct.f.f3.l1 configure -fg #000000}
+			catch {.ct.f.f3.e1 delete 0 end }
+			catch {.ct.f.f3.e1 insert 0 $updateperiod}
+		} else {
+			catch {.ct.f.f3.e1 delete 0 end }
+			catch {.ct.f.f3.e1 configure -state disabled}
+			catch {.ct.f.f3.l1 configure -fg #888888}
+		}
+	}
+	pack .ct.f.c3
+	
+	frame .ct.f.f3
+	pack .ct.f.f3 -fill x -pady 10
+	label .ct.f.f3.l1 -text "Refresh delay (sec)" -width 17
+	pack .ct.f.f3.l1 -side left
+	entry .ct.f.f3.e1
+	pack .ct.f.f3.e1 -side right
+	.ct.f.f3.e1 insert 0 $updateperiod
+
+	if {$iscmd==0} {
+		catch {.ct.f.f3.e1 delete 0 end }
+		catch {.ct.f.f3.e1 configure -state disabled}
+		catch {.ct.f.f3.l1 configure -fg #888888}
+		catch {.ct.f.c3 configure -state disabled}
+	}
+		
+	button .ct.ok -text "OK" -width 15 -command {
+		global shcmd iscmd isc chgres str
+		set l [.ct.f.f2.e1 get]
+		if {$l!=""} {
+			set changed 0
+			if {$shcmd!=$l} {set changed 1}
+			if {$iscmd!=$isc} {set changed 1}
+			if {$isc==1} {
+				set shcmd $l
+			} else {
+				set str $l
+			}
+			set iscmd $isc
+			set toupdate $isu
+			if {$toupdate==1} {
+				set updateperiod [.ct.f.f3.e1 get]
+			}
+			after cancel $chgres
+			if {$changed==1} {change}
+		}
+		destroy .ct
+	}\
+	 -font {helvetica 12 bold}
+	pack .ct.ok -side left
+	button .ct.cancel -text "Cancel" -command "destroy .ct"\
+	 -font {helvetica 12 bold} -width 15
+	pack .ct.cancel -side right
+}
+.m add separator
+.m add command -label "Выход" -command "exit"
+bind .l <3> {
+	set stopped 1
+	tk_popup .m [expr [winfo rootx .]+%x] [expr [winfo rooty .]+%y]
+}
+bind all <ButtonRelease-3> {
+	if {$paused==0} {
+		set stopped 0; move
+	}
+}
+bind .l <Double-1> "changeText"
+wm overrideredirect . 1
+update
+move
+puts stderr "Нажмите правую кнопку мыши, вы получите меню,"
+puts stderr "Первая кнопка обновит окно"

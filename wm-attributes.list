@@ -1,0 +1,14 @@
+# window class switch "blink"
+wm attributes . -alpha 0.99
+
+bind . <FocusIn>  { wm attributes . -alpha 0.99 }
+bind . <FocusOut> { fade %W 0.99 }
+
+proc fade {w val {min 0.5} {decr 0.03} {delay 50}} {
+    catch {after cancel $::ID}
+    if {$val > $min} {
+      	set val [expr {$val - $decr}]
+	wm attributes $w -alpha $val
+    }
+    set ::ID [after $delay \
+	[lreplace [info level 0] 2 2 $val]] }

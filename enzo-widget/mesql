@@ -1,0 +1,1112 @@
+#!/bin/sh
+# -*- tcl -*-
+#  \
+  exec wish "$0" -- "$@"
+
+#  mesql:  This program allows you to edit tables of databases. You can use it
+#          from the shell prompt in any of these ways:
+#  	   tksql
+#  	   tksql -host sql.diade.it
+#  	   tksql -host localhost -db mydb -tbl tel 
+#  	   tksql -db mydb -sql "select attr1,attr2 from table_a \
+#                     where attr3 = null"
+#
+#           in all these cases you will be able to edit the table. If your
+#           select statement is a join tksql will work in read-only mode or \
+#	         will let you edit only the first table.
+	
+# opts=host|user|db|pwd|tbl|sql|query|type
+#
+# Db($nick,$opts) info on all possible conections (.tksqldb)
+# Curr($opts) data for the current Conection
+# All procs can do eather:
+#   1. set current values
+#   2. connect using current values
+# 
+# Wanted behaviour:
+# mesql (no args) should
+#   1. read .tksqldb (if any) and prompt for a choice among those or "new"
+#   2. any opt should be a filter to possible values unless 
+#      host|db|user|type are given
+#   3. -new prevents from reading .tksqldb
+#   4. -nick name : that nick is used as connection
+#   5. Any mistake should lead to ConnectionLayout
+#
+
+#  defaults: tksql reads ~/.tksqlrc ~/.sdprinters and setup.tcl (in auto_path)
+#  an example of .tksql follows
+
+# set sd::setUp(DateStyle)   "SQL,European"
+# set sd::setUp(printers) {{|lpr -Pgw} {|lpr -Pfile} {|lpr -Pg} Excel}
+# set sd::setUp(dbg) 1
+# set setUp(host)    localhost
+# set setUp(defaultDb)  scuola
+# set ::sd::NumFmt EU
+
+
+
+namespace eval sd {}
+set sd::setUp(dbg)         0
+set sd::setUp(smtp-host) mail.lsduvs.edu.ua
+
+### PROCEDURE
+
+
+proc setDefaultRCfile {} {
+
+    global setUp tcl_platform
+
+    if {$tcl_platform(platform) == "linux"} {
+	set setUp(file.rc) ~/.tksqlrc
+	set setUp(file.db) ~/.tksqldb
+    } else {
+	# at the beginning .tksqlrc was w/o leading "." under win*
+	# let us catch old file if they exist
+	if {![info exist .tksqlrc] && [info exist tksqlrc]} {
+	    set setUp(file.rc) .tksqldb
+	} else {
+	    set setUp(file.rc) tksqldb
+	}	    
+
+	if {![info exist .tksqlrc] && [info exist tksqlrc]} {
+	    set setUp(file.rc) .tksqldb
+	} else {
+	    set setUp(file.rc) tksqldb
+	}	    
+	    
+    }
+    set setUp(file.rc) ~/.tksqlrc
+    set setUp(file.db) ~/.tksqldb
+
+}
+proc ParseArgs {} {
+    ## parse vars define w/ sd::parse and put them into Curr
+    global Curr Db
+    upvar \#0 argv argv
+
+    # options w/ argument
+    set opts_arg "host h user u pwd p tbl db d sql query nick extra total "
+    append opts_arg "limit nnot dbname"
+    # these opt do not require an argoment
+    set opts_sing " pop type mysql pg ro noup mask my"
+
+    set opts "$opts_arg $opts_sing"
+
+    # Allow a nick to be written w/out -nick
+    set last [lindex $argv [expr [llength $argv] -1] ]
+    set prev [lindex $argv [expr [llength $argv] -2] ]
+     if {[info exist Db($last,nick)]} {
+	# make sure this is not an argumnet to preceding opt
+	# if prev has a leading - we need to che it is in $opts_sing
+	if {! [regexp -- -(.*) $prev -> prev_opt] || \
+		[lsearch $opts_arg $prev_opt] < 0} {
+	    set Curr(nick) $last
+	}
+    }
+    
+
+    foreach opt $opts {
+	upvar \#0 $opt $opt
+    }
+    foreach "long short" "host h user u password p dbname d dbname db mysql my" {
+	if {[info exist $short]} {
+	    set $long [set $short]
+	    unset $short
+	}
+    }
+
+    if {[info exist mysql]} {
+	set Curr(type) "mysql"
+    }
+    if {[info exist pg]} {
+	set Curr(type) "pg"
+    }
+
+    foreach opt $opts {
+	if {[info exist $opt]} {
+	    set Curr($opt) [set $opt]
+	}
+    }
+
+    ## number notation
+    if {[info exist Curr(nnot)]} {
+	set ::sd::NumFmt $Curr(nnot)
+    }
+
+}
+proc FilterKnownConnections {} {
+
+    global Db Curr
+
+    foreach name [array names Db *,nick] {
+	set nick $Db($name)
+	foreach opt "host type dbname"  {
+	    ## only add to list of nicks if row options does not exclude it
+	    if {[info exist Curr($opt)] && $Curr($opt) != $Db($nick,$opt)} {
+		set no($nick) 1
+		break
+	    }
+	}
+	if {![info exist no($nick)]} {
+	    sd::Lappend nicks $nick
+	}
+    }
+    if {[info exist nicks]} {
+	set Db(nicks) "$nicks"
+	return 1
+    } else {
+	set Db(nicks) ""
+	return 0
+    }
+}
+proc ChooseConnLayout {} {
+    global Db 
+
+    # there is no connection to choose from, maybe we don't have .tksqldb
+    # or we specified everything on the command line
+    if {![info exist Db(nicks)] || $Db(nicks) == "new "} {
+	return
+    } 
+
+    sd::layout "L=list" -root . -f .chooseConn -grid
+    wm deicon .
+    eval $_W(L-list) insert end $Db(nicks)
+    bind $_W(L-list) <1> {
+	SetCurr [%W get @%x,%y]
+    }
+}
+proc SetCurr {nick} {
+
+    # sets Curr according to info on nick in Db
+    global Db Curr setUp
+
+    if {$nick == "new"} {
+	SetDefaults
+	ConnectLayout
+	tkwait var ::setUp(go)
+
+    } else {
+	foreach name [array names Curr] {
+	    unset Curr($name)
+	}
+	foreach name [array names Db $nick,*] {
+	    regexp $nick,(.*) $name -> opt
+	    set Curr($opt) $Db($name)
+	}
+    }
+    set Db(default) $nick
+    
+    if {[info exist Curr(query)] || [info exist Curr(tbl)] || \
+	    [info exist Curr(sql)]} {
+	set setUp(singleQuery) 1
+
+    }
+
+    return
+}
+proc SetDefaults {} {
+
+    global Curr
+
+    foreach "opt val" "type pg  host localhost" {
+	if {![info exist Curr($opt)]} {
+	    set Curr($opt) $val
+	}
+    }
+}
+proc AddPortDefault {} {
+    global Curr
+
+    ## def type and port
+    if {![info exist Curr(type)]} {
+	if {[info exist Curr(mysql)]} {
+	    set Curr(type) "mysql"
+	} elseif {[info exist Curr(pg)]} {
+	    set Curr(type) "pg"
+# 	    if {![info exist Curr(port)] || $Curr(port) == ""} {
+# 		set Curr(port) "5432"
+# 	    }
+	} else {
+	    set Curr(type) "pg"
+	}
+    }
+#     if {![info exist Curr(port)] && $Curr(type) == "pg"} {
+# 	set Curr(port) "5432"
+#     }
+#     if {![info exist Curr(port)] && $Curr(type) == "mysql"} {
+# 	set Curr(port) "3306"
+#     }
+
+}
+proc try_connection {args} {
+    # -top widget : destroys $top (that is the toplevel ConnectLayout)
+    # -create : try to connect and the create the db rather than connect
+    #           directly to the db
+    global Db Curr setUp
+    sd::parse create
+
+    AddPortDefault
+    if {$create} {
+	set opts "host user password type port"
+    } else {
+	set opts "dbname host user password type port"
+    }	
+
+    foreach "opt" $opts {
+	if {[info exist Curr($opt)] && $Curr($opt) != ""} {
+	    append opts " -$opt $Curr($opt)"
+	}
+    }
+    if {$create} {
+	if {[regexp "pg" $Curr(type)]} {
+	    append opts " -dbname template1"
+	} elseif {[regexp "mysql" $Curr(type)]} {
+	    append opts " -dbname mysql"
+	}
+    }
+
+    if {[catch {set ::pg::p [eval pg::connect $opts]} Curr(connInfo) ]} {
+	if {[regexp "user.+does not exist" $Curr(connInfo)]} {
+	    sd::Tell "User is not defined in database, you must create the \
+		    user first. NOTE: not all users are entitled to create \
+		    users you may need to ask to your database admin." 
+	    return
+	}
+	ConnectLayout
+	tkwait var ::setUp(go)
+	if {![regexp password $Curr(connInfo)]} {
+#	    set sd::Tell $setUp(connInfo)
+	}
+	return 0
+    } else {
+	if {$create} {
+	    if {$Curr(dbname) == ""} {
+		sd::Tell "You must fill in the database name!"
+		return
+	    }
+	    set sql "CREATE DATABASE $Curr(dbname)"
+	    pg::exec $::pg::p $sql 
+	    pg::result $_r -clear
+	    eval try_connection $args -create 0
+	    return
+	}
+	::sqldb::FixTksql_query -conn $::pg::p
+#	sd::dbg 1 p=$::pg::p
+	if {[info exist top]} {
+	    destroy $top
+	}
+	if {[info exist Curr(dbname)]} {
+	    set setUp(info) "db $Curr(dbname) on $Curr(host)"
+	} else {
+	    if {![info exist Curr(host)]} {
+		set Curr(host) localhost
+	    }
+	    set setUp(info) "default db $Curr(host)"
+	}
+
+	if {[info exist Curr(tbl)] || [info exist Curr(sql)]} {
+	    OpenQuery
+	    # this prevents building tksqlLayout
+	    set setUp(toplevel) 1
+	    if {! [info exist setUp(singleQuery)]} {
+		wm with .
+	    }
+	} elseif {![info exist Curr(dbname)] || $Curr(dbname) == ""} {
+	    wm deic .
+	    tksqlLayout
+	    ShowDb $pg::p $setUp(list)
+	} else {
+	    wm deic .
+	    rescan $pg::p
+	}
+	set setUp(go) 1
+	return 1
+    }
+}
+proc ConnectLayout  {} {
+    # opens a connections to said host
+    global setUp Curr
+
+    if {[winfo exist .connLay]} {
+	return
+    }
+
+#    sd::defaults -arr setUp port 5432
+    set var {
+	#- connection to
+	host 
+	port 
+	dbname 
+     	user 
+	password 
+	m=nick 
+	m=db_type 
+	{ b=connect b=cancel b=create_db} 
+	#- info
+	l=connInfo   
+    }
+    sd::layout $var -top .connLay -grid -arr Curr -border -side left \
+	    -wtit "Choose host"  -eWid 15
+    wm protocol  $_W(top) WM_DELETE_WINDOW "exit"
+    sd::WidPos $_top 
+    focus $_W(e-password)
+
+    $_W(e-password) conf -show "*"
+    $_W(l-connInfo)     conf -wraplength 8c
+    $_W(b-connect)  conf -comm    "try_connection -top $_top"
+    $_W(b-create_db)  conf -comm    "try_connection -top $_top -create"
+    $_W(b-cancel)   conf -comm    "cancel $_top"
+    set W $_W(m-db_type)
+    if {[info exist Curr(type)] && $Curr(type) == "mysql"} {
+	$W conf -text "MySQL"
+    } else {
+	$W conf -text "PostgreSQL"
+    }
+    $_W(m_db_type) add comm -label "PostgreSQL" -comm "
+	set Curr(type) pg; set Curr(port) 5432; $W conf -text PostgreSQL"
+    $_W(m_db_type) add comm -label "MySQL" -comm "
+	set Curr(type) mysql; set Curr(port) 3306; $W conf -text MySQL"
+
+    foreach e "host port dbname user password" {
+	bind $_W(e-$e) <Return> "try_connection -top $_top"
+    }
+    $_W(m_nick) conf -postcomm "FillNickMenu $_W(m_nick)" 
+    $_W(m-nick) conf -text "Known connections"
+    return
+}
+proc FillNickMenu {m args} {
+
+    global Db
+    sd::parse
+
+    $m conf  -tearoff 0
+    $m delete 0 end 
+    set all [lsort [array names Db *,nick]]
+    if {[info exist Db(nicks)]} {
+	set names $Db(nicks)
+    } else {
+	set names ""
+    }
+    foreach name $names {
+	regsub ,nick $name "" nick
+	if {$name == "new"} {
+	    continue
+	}
+	if {![info exist Db($nick,descr)]} {
+	    set Db($nick,descr) ""
+	}
+	set label "$Db($nick,nick) - $Db($nick,descr)"
+	$m add comm -label $label -comm "ConnDb $nick"
+# 	SetCurr $nick; 
+# 	set setUp(go) 1;
+# 	destroy .connLay
+	if {[info exist cascade]} {
+	    $m entryconf $label -comm "ConnDb $nick 0"
+	} 
+    }
+    $m add sep
+    $m add comm -label "Edit Connections" -comm Edit_ReadDefaults
+
+    # connections in .tksqldb not filtered by command line opts
+    foreach name $all {
+	regsub ,nick $name "" nick
+	if {[lsearch $names $nick] < 0} {
+	    lappend other $nick
+	}
+    }
+
+    if {[info exist other]} {
+	destroy $m.other
+	set mo [menu $m.other -tearoff 0]
+	$m add cascade -label "Other connection" -menu $mo
+
+	foreach nick $other {
+	    if {![info exist Db($nick,descr)]} {
+		set Db($nick,descr) ""
+	    }
+	    $mo add comm -label "$Db($nick,nick) - $Db($nick,descr)" \
+		    -comm "ConnDb $nick"
+# 	    SetCurr $nick; 
+# 	    set setUp(go)p 1;
+# 	    destroy .connLay
+	}
+    }	    
+}
+proc tksqlLayout {} {
+    # 
+    global l db setUp
+    sd::defaults -arr setUp all 0
+
+    if {[info exist setUp(toplevel)] } {
+	return
+    }
+
+    # Layout
+    set lay {
+	l=info 
+	filter 
+	L=tlist
+	l=conn
+    }
+    sd::layout $lay -top . -grid -arr setUp -side left \
+	    -head "m=Db c=all c=view -> b=Quit" 
+
+    set setUp(toplevel) 1
+    $_W(b-Quit) conf -comm "exit"
+    $_W(l-info) conf -rel sun
+    $_W(l-conn) conf -textvar ::pg::p
+    bind $_W(e-filter) <Return> {rescan $pg::p}
+    set m $_W(m_Db)
+    set l $_W(L-tlist)
+    set setUp(list) $l
+    $m add command -label "Choose host" -comm "ConnectLayout"
+    $m add command -label "Choose db" -comm "ShowDb $pg::p $l"
+    $m add comm -label "Preferences" -comm PrefLayout
+#    $m add cascade -label "DateStyle" -menu [set md [menu $m.md]]
+    $m add comm -label "Edit known connections" -comm Edit_ReadDefaults
+#    $m add cascade -label "Choose connection" -menu $m.nick
+#    set mn [menu  $m.nick -postcomm "FillNickMenu $m.nick -cascade" ]
+    $m add sep
+    $m add comm -label "Create database" -comm "ConnectLayout"
+    $m add comm -label "Create Table" -comm {sqldb::structLayout -conn $pg::p}
+    $m add comm -label "Add log table" \
+	    -comm {sqldb::CreateLogTable -conn $pg::p}
+    $m add sep
+    $m add comm -label "Quit" -comm exit
+    
+
+    focus $_W(e-filter)
+    
+    update
+    if {[info exist db] && $db != ""} {
+	rescan $pg::p
+    } else {
+	ShowDb $pg::p $l
+    }
+
+    # allow $list fo fill up the space you can set with mouse movement
+    bind . <Configure> "$_W(L-tlist) conf -hei 0"
+
+    return $l
+}
+proc PrefLayout {} {
+    set lay {
+	#- general preferences
+	m2=DateStyle:12
+	m2=NumFmt:12.4
+	c=debug/dbg 
+	#- printer configuration
+	printers:15.35 - 
+	spread_sheet_path/excelPath:15.35 -
+	spread_sheet_file/excelFile:15.35  -
+    }
+    sd::layout $lay -top -eWid 30 -lwid 30 -wtit "Preferences" \
+	    -head " b=Save -> b=Quit" -arr ::sd::setUp -side left \
+	    -border 1
+    $_W(b-Quit) conf -comm "destroy $_top"
+    $_W(b-Save) conf -comm "SaveEnv"
+
+    ### menu Date Style
+    foreach style "Iso SQL,European SQL,US Postgres German" {
+	$_W(m_DateStyle) add command -label $style -comm "
+	    pg_exec \$pg::p \"set DateStyle to '$style'\" 
+	    if \[regexp US $style ] {
+	        set ::sd::EuroDate 0
+	    } else {
+	        set ::sd::EuroDate 1
+	    }  
+	    set ::sd::setUp(DateStyle) $style
+	    "
+    }
+    foreach numFmt "EU US none" {
+	$_W(m_NumFmt) add comm -label $numFmt -comm \
+		"set ::sd::setUp(NumFmt) $numFmt"
+    }
+    sd::tip $_W(e-printers) "Printers must be groff aware printers. As a \
+	    very handy alternative use name 'SpreadSheet' to 'print' \
+	    into a file and open a SpreadShift (Gnumeric, Kcalc, Excel...)\
+	    directly on that file, write below the correct path for your \
+	    program"
+    sd::tip $_W(e-excelPath) "The name of a program able to read csv file, \
+	    almost any spreadsheet able to import from text file will do. \
+	    Gnumeric, Kwrite, OpenOffice (ooocalc), Excel will do."
+    sd::tip $_W(e-excelFile) "The name of the file eg.: /tmp/sc.cvs, C:/temp/sc.cvs"
+    sd::tip $_W(c-dbg) "You can get rid of debug messages"
+}
+proc ShowDb {p l} {
+
+    $l delete 0 end
+
+    if {[regexp "pgsql" $p]} {
+	set sql "select datname from pg_database order by datname"
+	pg::select $p $sql R {
+	    lappend dbnames $R(datname)
+	}
+    } elseif {[regexp "mysql" $p]} {
+	pg::select $p "show databases" R {
+	    lappend dbnames $R(Database)
+	}
+    }
+    bind $l <1> "SetDb \[%W get @%x,%y] $p"
+    if {[info exist dbnames]} {
+	eval $l insert end $dbnames
+    }
+}
+proc ConnDb {nick {destroy 0}} {
+    # Actions taken when a db is decided
+    global setUp
+    SetCurr $nick; 
+    set setUp(go) 1;
+    if {$destroy} {
+	destroy .connLay
+    }
+}
+proc SetDb {dbname p} {
+    # called from <1> on list of databases
+
+    global Curr
+    destroy .tmpMenu
+    set m [menu .tmpMenu -tearoff 0]
+    $m add comm -label "Connect to db $dbname" -comm \
+	    "set  Curr(dbname) $dbname; \
+	    try_connection ; \
+	    rescan $::pg::p "
+    foreach name "tbl query sql" {
+	catch {unset Curr($name)}
+    }
+    $m add comm -label "Drop db $dbname" -comm "DropDb $dbname"
+    tk_popup .tmpMenu [winfo pointerx .] [winfo pointery .]
+    return
+}
+proc DropDb {dbname} {
+
+    sd::Tell "Are you SURE you want to DROP db $dbname? there is no way to \
+	    undo such operation!!" yesno
+    if {$_risp == "yes"} {
+	pg::exec $pg::p "DROP DATABASE $dbname"
+    }
+}
+proc SaveEnv {} {
+    
+    upvar \#0 sd::setUp setUp
+
+    set id [open $::setUp(file.rc) w]
+    foreach name [array names setUp] {
+	if {$setUp($name) != ""} {
+	    puts $id "set sd::setUp($name) [list $setUp($name)]"
+	}
+    }
+    puts $id "set ::sd::EuroDate $::sd::EuroDate"
+    puts $id "set ::sd::NumFmt $::sd::NumFmt"
+    close $id
+    sd::Tell "Values have been saved in  $::setUp(file.rc)"
+    return
+}
+proc postMenu {tbl x y } {
+    # post menu when <1> on name of a table
+
+    global Curr
+    set Curr(tbl) $tbl
+    catch {destroy .menu}
+    set m [menu .menu -tearoff 0]
+    $m add comm -label "Edit $tbl - View: Table" -comm {
+	catch {unset Curr(sql)}
+	OpenQuery
+    }
+    $m add comm -label "Edit $tbl - View: mask" -comm {
+	catch {unset Curr(sql)}
+	OpenQuery -mask
+    }
+    $m add cascade -label Queries -menu $m.query
+    $m add sep
+    destroy $m.query
+    pg::QueryFillMenu $m.query -tbl $Curr(tbl) -list -conn $::pg::p
+#     $m add comm -label "Info on $Curr(tbl)" -comm \
+# 	    "pg::GetInfo $Curr(tbl) -qID $Curr(tbl) -conn $pg::p "
+    $m add comm -label "Describe $Curr(tbl)" -comm \
+	    "pg::ShowTableInfo -tbl $Curr(tbl) -conn $pg::p \
+	    -arr Info_$tbl "
+    $m add comm -label "Describe $Curr(tbl) w/ tksql extensions" -comm \
+	    "sqldb::structLayout -tbl $Curr(tbl) -conn $pg::p "
+    tk_popup $m $x $y
+
+    return
+}
+proc cancel {top} {
+    # make sure no connection is active before quitting
+    upvar ::pg::p p
+    if {![info exist p]} {
+	exit
+    } else {
+	destroy $top
+    }
+}
+proc rescan {p} {
+    ### shows tables available in Curr(db)
+    global all setUp l
+
+    if {![info exist l]} {
+	# if rescan is called before the listbox is created...
+	#return
+	tksqlLayout
+    }
+    $l delete 0 end
+
+    set cond [pg::ifVar setUp(filter) -cond {relname ~* '@v'} -multi]
+
+    if {[regexp "pgsql" $p]} {
+	set tbl [pg_tables $cond]
+    } elseif {[regexp "mysql" $p]} {
+	set tbl [mysql_tables $setUp(filter)]
+    }
+    if {![info exist tbl]} {
+	return
+    }
+
+    eval $l insert end $tbl
+    bind $l <1> {
+	postMenu [%W get @%x,%y] %X %Y
+    }
+
+    ### Dimensiono la lista delle tabelle
+    set n_tbl [llength $tbl] 
+    if {$n_tbl > 10} {
+	$l conf -hei [expr $n_tbl > 25 ? 25 : $n_tbl]
+    }
+    return
+}
+proc pg_tables {cond} {
+    # called from inside rescan for type "pgsql"
+    upvar I I       
+    global setUp
+
+    if {$setUp(all)} {
+	set sql "select * from pg_class $cond relkind != 'i' \
+		and relname !~ '^pg_' order by relname"
+	set sql2 "select * from pg_class $cond relkind != 'i' \
+		and relname ~ '^pg_' order by relname"
+	pg::select $pg::p $sql R { 
+	    lappend tbl $R(relname)
+	    set I($R(relname)) $R(relhasrules)
+	}
+	pg::select $pg::p $sql2 R { 
+	    lappend tbl $R(relname)
+	}
+    } elseif {$setUp(view)} {
+	set sql "select * from pg_class $cond (relname !~ '^pg_') and \
+		(relkind='r') and relhasrules order by relname" 
+	#	pg::exec $p "$sql" 
+	pg::select $pg::p $sql R { 
+	    if {![regexp "^pga_" $R(relname)]} {
+		lappend tbl $R(relname)
+	    }
+	    set I($R(relname)) $R(relhasrules)
+	}
+    } else {
+	set sql "select * from pg_class $cond (relname !~ '^pg_') and \
+		(relkind='r') and (not relhasrules) order by relname" 
+#	pg::exec $pg::p "$sql" 
+	pg::select $pg::p $sql R { 
+	    if {![regexp "^pga_" $R(relname)]} {
+		lappend tbl $R(relname)
+	    }
+	    set I($R(relname)) $R(relhasrules)
+	}
+    }
+    if {[info exist tbl]} {
+	return $tbl
+    }
+}
+proc mysql_tables {filter} {
+    # called from inside rescan for type "mysql"
+    upvar I I    
+    global setUp
+
+    set tables ""
+    set tbl_list [mysqlinfo $pg::p tables]
+    if {$filter == ""} {
+	return $tbl_list
+    } else {
+	foreach tbl $tbl_list {
+	    if {[regexp $filter $tbl]} {
+		lappend tables $tbl
+	    }
+	}
+	if {[info exist tables]} {
+	    return $tables
+	}
+    }
+}
+proc OpenQuery {args} {
+    global Curr setUp host db sql tbl extra noup total
+    ### sql
+    sd::parse mask ro  {fetch 25} pop {extra ""}
+
+    if {[regexp "pgsql" $::pg::p]} {
+	if {[info exist Curr(tbl)]} {
+	    ## views must be set read-only 
+	    set sql_views "SELECT count(*) FROM PG_VIEWS \
+		    WHERE viewname = '$Curr(tbl)'"
+	    set _r [pg::exec $pg::p "$sql_views"]
+	    if {[pg_result $_r -getTuple 0] > 0} {
+		set ro 1
+	    }
+	}
+    }
+    if {[info exist setUp(singleQuery)]} {
+	set Curr(top) .
+	wm deic .
+    } else {
+	set Curr(top) 1
+    }
+    set opts " -grid  -fit -conn $pg::p -mask $mask"
+    foreach opt "fetch ro mask extra total pop top query" {
+	if {[info exist Curr($opt)] && $Curr($opt) != ""} {
+	    append opts " -$opt $Curr($opt)"
+	}
+    }
+
+    ### go!
+    if {[info exist Curr(sql)]} {
+	eval pg::editDb $opts -sql [list $Curr(sql)] 
+    } else {
+	eval pg::editDb $opts -tbl $Curr(tbl) 
+    }
+}
+proc SetDateStyle {} {
+    if {[info exist sd::setUp(DateStyle)]} {
+	if {[regexp "pgsql" $pg::p]} {
+	    pg::exec $pg::p "set DateStyle to '$sd::setUp(DateStyle)'"
+	}
+    }
+}
+#### edit defaults
+proc Edit_ReadDefaults {} {
+    global setUp Db Db2
+
+    set titles "nick descr host type dbname user password tbl query sql port"
+    set n_rows [llength [array names Db *,nick]]
+#    sd::Table -var Db2 -top -edit
+    TableEditLayout
+    sd::TableHead -t $_t -head $titles
+
+    set c 0
+    foreach opt $titles {
+	set n($opt) $c
+	incr c
+    }
+
+    set r 0
+    foreach nick [GetNicks] {
+	if {$nick == "new"} {
+	    continue
+	}
+	incr r 
+	foreach opt $titles {
+	    if {[info exist Db($nick,$opt)]} {
+		set Db2($r,$n($opt)) $Db($nick,$opt)
+	    }
+	}
+    }
+    $_t conf -rows [expr $r + 2]
+}
+proc GetNicks {} {
+    global Db
+    if {![info exist Db]} {
+	return
+    }
+    foreach name [array names Db *,nick] {
+	lappend nicks $Db($name)
+    }
+    if {[info exist nicks]} {
+	return [lsort $nicks]
+    }
+    return
+}
+proc TableEditLayout {} {
+    # Create the layout of the window w/ table & co.
+
+    upvar _t t
+    global _W
+
+    set lay "
+    {p b=Save -> b=Quit}                          %0
+    e=edit                                      %0
+    Tb=Db2                                      %1
+    "
+    ::sd::layout $lay -top -grid -side left -wtit "Edit known connection"
+    set t $_W(tb-Db2) 
+    $t conf -var Db2
+    $_W(e-edit) conf -textvar Db2(active)
+    
+    sd::addBindTag $_W(e-edit) edt
+    bind $_W(e-edit)  <Return> "focus $t "
+    $t conf -colsep "\t" -rowsep "\n" -selectmode extended
+    bind $t <Return>	"focus $_W(e-edit); break"
+
+    ### TAGS
+    $t tag conf edit -bg #96cca4   ;# sort of pale green
+    $t tag conf active -fg yellow -bg #69aea6
+    $t tag conf text -an w -fg navy
+    $t tag conf descr -an w -fg blue
+    $t tag conf type  -fg indianred 
+    $t tag col text 0 1 2 3 4 5 6 7 8 9 10 11
+    $t tag col descr 1
+    $t tag col type 3
+    ### Menu
+    $_W(b-Save) conf -comm "Edit_SaveFile $t Db2"
+    $_W(b-Quit) conf -comm "destroy $_W(top)"
+
+    return
+}
+proc Edit_SaveFile {t var} {
+    global setUp tcl_platform
+    upvar \#0 $var V
+
+    set titles [$t get 0,0 0,12]
+    foreach opt $titles {
+	set C($opt) [lsearch $titles $opt]
+    }
+    foreach cell [array names V *,0] {
+	regexp (.+),(.+) $cell -> row col
+	set nick $V($cell)
+	if {$nick == "nick"} {
+	    # this is the header
+	    continue
+	}
+	lappend txt "# nick: $nick"
+	foreach opt $titles {
+	    if {[ info exist V($row,$C($opt))]} {
+		lappend txt "set Db($nick,$opt) [list $V($row,$C($opt))]"
+	    }
+	}
+    }
+    set id [open $setUp(file.db) w]
+    puts $id [join $txt \n]
+    close $id
+
+    if {$tcl_platform(platform) == "unix"} {
+	file attribute $setUp(file.db) -permission 0600
+    }
+}
+### bgerror
+# you can inhibit prompt of error Window to send a message to sandro 
+# by setting sd::setUp(promptSendError) 0 in .tksqlrc
+if {![info exist sd::setUp(promptSendError)] || $sd::setUp(promptSendError)} {
+    proc bgerror {err} {
+	global errorInfo tcl_platform setUp 
+
+	# save errorInfo which would be erased in the catch below otherwise.
+	set info $errorInfo ;
+	# For backward compatibility :
+	# Let's try to execute "tkerror" (using catch {tkerror ...} 
+	# instead of searching it with info procs so the application gets
+	# a chance to auto load it using its favorite "unknown" mecanism.
+	# (we do the default dialog only if we get a TCL_ERROR (=1) return
+	#  code from the tkerror trial, other ret codes are passed back
+	#  to our caller (tcl background error handler) so the called "tkerror"
+	#  can still use  return -code break, to skip remaining messages
+	#  in the error queue for instance)  -- dl
+	set ret [catch {tkerror $err} msg];
+	if {$ret != 1} {return -code $ret $msg}
+
+	# Ok the application's tkerror either failed or was not found
+	# we use the default dialog then :
+	if {$tcl_platform(platform) == "macintosh"} {
+	    set ok Ok
+	} else {
+	    set ok OK
+	}
+	### Prima messaggio errore e scelta azione
+	set Error "Tksql met an error. Please consider sending me the track of \
+		this error so that I can improve the quality of tksql.\n $err"
+	set button [tk_dialog .bgerrorDialog "Error in Tcl Script" \
+		"$Error" error 0 $ok "Skip Messages" "Mail a Sandro" "Show"]
+	if {$button == 0} {
+	    return
+	} elseif {$button == 1} {
+	    return -code break
+	} elseif {$button == 3} {
+	    set setUp(mostra) 1
+	    sd::Text -top .bgerrorTrace -grid -text $info
+	    sd::HilightText $_t {procedure ".*"} -fg red \
+		    -font "Helvetica 12 bold"  -line
+	    sd::HilightText $_t {line [0-9]+} -fg indianred -line
+	    sd::HilightText $_t {while executing|invoked *.hin} -fg blue -line
+	    bind $_t <1> {sd::ShowProcUnderMouse %W %x %y}
+	    return
+	}
+	### Trace errore
+	bgerrorTextForMail
+	return
+    }
+}
+proc bgerrorTextForMail {} {
+    ### pops a window to edit an explication of the situation in which the 
+    # problem arouse
+    global setUp
+    upvar info info
+    set var {
+	M=msg 
+	T=txt
+	smtp-host
+	reply-to
+	{ b=cancel b=show_error b=send_to_sandro}
+    }
+    sd::layout $var -arr errTrace -top -grid -border 0 -root .err
+    wm title $_top "Error log"
+    $_W(b-cancel) conf -comm "destroy .err"
+    $_W(b-send_to_sandro) conf -comm \
+	    "bgerrorSendMail .err $_W(T-txt) [list $info]"
+    $_W(b-show_error) conf -comm "
+	    set setUp(mostra) 1
+            sd::Text -top -grid -text [list $info] "
+    set ::errTrace(smtp-host) mail.bee-side.com
+#    $_W(e-smtp-host) conf -textvar sd::setUp(smtp-host)
+    $_W(e-reply-to) conf -textvar sd::setUp(reply-to)
+
+    set txt "Before sending the message, please tell me something about the \
+	    circumstances in which the error arouse. "
+    sd::tip $_W(e-reply-to) "You need to put an e-mail only if you want an \
+	    answer from sandro"	    
+    sd::tip $_W(e-smtp-host) "You don't need to change this if you are \
+	    already connected to the internet, otherwise you may want to \
+	    write your smart host, if empty, locahost will be used"
+    regsub -all "\n\t" $txt "\n" txt
+    $_W(M-msg) conf  -bg plum -justify left -text $txt -takefocus 0 \
+	    -aspect 200
+    focus $_W(T-txt)
+#    $_W(b-explain) conf -comm "errorExplain"
+
+    # Center the window on the screen.
+
+    set w .err
+    wm withdraw $w
+    update idletasks
+    set x [expr {[winfo screenwidth $w]/2 - [winfo reqwidth $w]/2 \
+	    - [winfo vrootx [winfo parent $w]]}]
+    set y [expr {[winfo screenheight $w]/2 - [winfo reqheight $w]/2 \
+	    - [winfo vrooty [winfo parent $w]]}]
+    wm geom $w +$x+$y
+    wm deiconify $w
+
+    # Be sure to release any grabs that might be present on the
+    # screen, since they could make it impossible for the user
+    # to interact with the stack trace.
+
+    if {[grab current .] != ""} {
+	grab release [grab current .]
+    }
+    set setUp(mostra) 0
+    return
+}
+proc bgerrorSendMail {top t errorMsg} {
+    ### Check if they really wrote a note, then send
+    global setUp pg::pgSetUp errTrace
+    upvar 1 info info     pg::pgSetUp p
+    lappend txt [$t get 1.0 end]
+    if {[string length $txt] < 10} {
+	sd::Tell "Please, write a note before sending the message"
+	return
+    }
+    foreach var "rel-date rel rev" {
+	lappend vars "sql:$var:  $pg::pgSetUp(sql:$var)"
+    }
+    lappend txt [join $vars \n]
+    lappend txt $errorMsg
+    if {$errTrace(smtp-host) == ""} {
+	set errTrace(smtp-host) localhost
+    }
+    
+    sd::mailto tclbug@bee-side.com -subj "Tksql: Error notification" \
+	    -text [join $txt \n] -from $sd::setUp(reply-to) \
+	    -smtp $errTrace(smtp-host)
+    destroy $top 
+    
+    return
+}
+
+
+### PROGRAM
+### Packages
+if {[file exist /usr/lib/alpha]} {
+    set auto_path "/usr/lib/alpha $auto_path"
+}
+package require sdsql
+package require sqldb
+sd::Init
+wm with .
+# sometimes you may want this, but is not needed
+# namespace import pg::*
+
+
+sd::optsDef
+sd::binDef
+pg::version
+
+### tksqlrc & default printers & parsing of args
+
+source [sd::searchLib setup.tcl]
+
+setDefaultRCfile
+# read $argv just to understand if they set -noinit
+sd::parse  -argv 
+
+catch {source $setUp(file.rc)}
+
+if {[file exist $setUp(file.rc)] && ![info exist noinit]} {
+    source $setUp(file.rc)
+}
+sd::dbg 1 "If you don't want warning messages, turn them off "
+sd::dbg 1 "putting a row w/ 'set sd::setUp(dbg) 0' in your .tksqlrc"
+
+if {[file exist ~/.sdprinters]} {
+    source ~/.sdprinters
+}
+sd::Lappend ::sd::setUp(printers) SpreadSheet
+if {[info exist ::sd::setUp(DateStyle)] &&  [regexp -nocase european $::sd::setUp(DateStyle)]} {
+    set sd::EuroDate 1
+} else {
+    set sd::EuroDate 0
+}
+
+#sd::parse -argv {host $setUp(host)} {limit 25} {type pg}
+sd::parse -argv  {limit 25}
+
+catch {source $setUp(file.db)}
+ParseArgs
+
+## did we ask for a particular nick?
+if {[info exist Curr(nick)]} {
+    ## if set by -nick
+    if {![info exist Db($Curr(nick),nick)]} {
+	sd::Tell "No connection with that name is defined"
+	exit
+    }
+    SetCurr $Curr(nick)
+} elseif {[info exist query] || [info exist tbl] || [info exist sql]} {
+    SetDefaults
+    set setUp(singleQuery) 1
+    wm deic .
+} else {
+    FilterKnownConnections
+    SetDefaults
+    try_connection
+# 	ConnectLayout
+# 	tkwait var setUp(go) 
+}
+
+
+foreach opt "nnot noup extra total ro limit mask" {
+    if { [info exist $opt]} {
+	set Curr($opt) [set $opt]
+	# lappend cmd -$opt [set $opt]
+    }
+}
+
+if {![info exist pg::p]} {
+    try_connection 
+}
+
+SetDateStyle
+

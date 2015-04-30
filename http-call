@@ -1,0 +1,80 @@
+#!/usr/local/bin/wish8.4
+
+set ans {}
+set host {127.0.0.1}
+set port {8080}
+set path {/}
+set enc {ascii}
+
+proc main_window_sc_sync {} {
+  set fw [winfo reqwidth  .area.c.f]
+  set fh [winfo reqheight .area.c.f]
+  .area.c config -scrollregion "0 0 $fw $fh"
+}
+
+proc main_window {} {
+#
+# TOP
+#
+  set tf [frame .top]
+  pack $tf -anchor nw -side top
+  set i 0
+  foreach {nm txt var} {h "хост" host
+                        p "порт" port
+                        r "путь" path} {
+    grid [label $tf.l$i -text "$txt\:"] -column $i -row 0  -sticky w
+    grid [entry $tf.e$i -textvariable $var] -column $i -row 1 -sticky news
+    incr i
+  }
+  foreach {nm txt com} {c "соединиться" http_call
+                        e "выход" exit} {
+    grid [button $tf.b$i -text $txt -command $com -pady 0] \
+         -column $i -row 1 -sticky news
+    incr i
+  }
+  grid [menubutton $tf.me -textvariable enc -menu $tf.me.m -pady 0] - \
+         -column 3 -row 0 -sticky news
+  menu $tf.me.m -tearoff 0
+  set n 0
+  foreach {i} [lsort [encoding names]] {
+    $tf.me.m add command -command "set enc $i" -label "$i" \
+      -columnbreak [expr {$n%22?0:1}] \
+      -foreground [expr \
+         [regexp {1251|koi.*r|866|iso.*-8|Cyr} $i]?{#00cc00}:{#000000}]
+    incr n
+  }
+#
+# AREA
+#
+  set area [frame .area]
+  pack $area -fill both -expand 1 -side top
+  scrollbar .area.y -command {.area.c yview} -orient vertical
+  scrollbar .area.x -command {.area.c xview} -orient horizontal
+  canvas .area.c -yscrollcommand {.area.y set} \
+                 -xscrollcommand {.area.x set} \
+                 -width 10 -height 200
+  frame .area.c.f
+  .area.c create window 0 0 -anchor nw -window .area.c.f
+  grid .area.c .area.y -sticky news
+  grid         .area.x -sticky news
+  grid rowconfig    .area 0 -weight 1
+  grid columnconfig .area 0 -weight 1
+  pack [message .area.c.f.t -textvariable ans -font {Courier}]
+  bind .area.c.f.t <Configure> main_window_sc_sync
+}
+
+main_window
+
+proc http_call {} {
+  global ans host port path enc
+  set s [socket $host $port]
+  fconfigure $s -translation crlf
+  puts $s "GET $path HTTP/1.0"
+  puts $s "Host: $host"
+  puts $s {User-Agent: Michurin}
+  puts $s {}
+  flush $s
+  fconfigure $s -translation auto -encoding $enc
+  set ans [read $s]
+}
+
