@@ -12,7 +12,9 @@ The examples of writing programs , I took with NASA and other
 research institutions for the visualization and presentation of
 scientific data. Here are some examples of their work on Tcltk.
 
-[DS9](http://ds9.si.edu/site/Home.html)
+[DS9 - astronomical visualization application from SAO](http://ds9.si.edu/site/Home.html)
+[FITSview - FITS image viewer from NRAO](http://www.nrao.edu/software/fitsview/)
+[GAIA - Graphical Astronomy and Image Analysis Tool](http://astro.dur.ac.uk/~pdraper/gaia/gaia.html)
 
 Let me remind you what and where did TclTk.
 
